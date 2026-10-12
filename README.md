@@ -227,7 +227,7 @@ cargo test --features cli,trading
 
 All tests use a mocked transport with fixed fake values modelled on the
 shapes in the official API reference; there is no network access and no real
-account data. Minimum supported Rust version: 1.85 (verified with the committed `Cargo.lock`; CI builds it).
+account data. Minimum supported Rust version: 1.88 (verified with the committed `Cargo.lock`; CI builds it).
 
 ## License
 

@@ -18,7 +18,7 @@ All notable changes are documented here. Format follows
 - `trading`: `EquityOrder` uses `Decimal` and typed enums; order responses are
   typed (`Order`, `RecentOrders`, `Quote`, `OrderImpact`).
 - Decode errors no longer echo response values.
-- MSRV is Rust 1.85 (verified with the committed lockfile).
+- MSRV is Rust 1.88 (verified with the committed lockfile).
 
 ## [0.1.0]
 

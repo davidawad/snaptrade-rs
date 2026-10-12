@@ -197,7 +197,7 @@ impl<T: Transport> Client<T> {
             let total = page["pagination"]["total"].as_u64();
             let got = data.len();
             out.extend(data);
-            if got == 0 || total.map_or(true, |t| out.len() as u64 >= t) {
+            if got == 0 || total.is_none_or(|t| out.len() as u64 >= t) {
                 return Ok(out);
             }
         }
