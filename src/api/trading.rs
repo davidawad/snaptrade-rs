@@ -8,55 +8,33 @@
 //! it does retry after HTTP 429, where the request was rejected unprocessed.
 //! Pass a `client_order_id` where the API supports it so you can reconcile.
 
-use crate::client::{as_array, seg, Client};
+use crate::client::{from_value, list_from_value, seg, Client};
 use crate::error::{Error, Result};
+use crate::models::{
+    AccountId, BrokerageOrderId, Decimal, Order, OrderAction, OrderImpact, OrderType, Quote,
+    RecentOrders, SymbolId, TimeInForce, TradeId,
+};
 use crate::transport::{Method, Transport};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum Action {
-    Buy,
-    Sell,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub enum OrderType {
-    Limit,
-    Market,
-    StopLimit,
-    Stop,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub enum TimeInForce {
-    Day,
-    #[serde(rename = "GTC")]
-    Gtc,
-    #[serde(rename = "FOK")]
-    Fok,
-    #[serde(rename = "IOC")]
-    Ioc,
-}
-
 /// Body for [`Client::order_impact`] and [`Client::place_order`].
 #[derive(Clone, Debug, Serialize)]
 pub struct EquityOrder {
-    pub account_id: String,
-    pub action: Action,
+    pub account_id: AccountId,
+    pub action: OrderAction,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub universal_symbol_id: Option<String>,
+    pub universal_symbol_id: Option<SymbolId>,
     pub order_type: OrderType,
     pub time_in_force: TimeInForce,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub price: Option<f64>,
+    pub price: Option<Decimal>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub stop: Option<f64>,
+    pub stop: Option<Decimal>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub units: Option<f64>,
+    pub units: Option<Decimal>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub notional_value: Option<f64>,
+    pub notional_value: Option<Decimal>,
     /// Only used by [`Client::place_order`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_order_id: Option<String>,
@@ -72,10 +50,10 @@ impl<T: Transport> Client<T> {
     /// `GET /accounts/{accountId}/orders`. `state`: `all`, `open` or `executed`.
     pub fn orders(
         &self,
-        account_id: &str,
+        account_id: impl Into<AccountId>,
         state: Option<&str>,
         days: Option<u32>,
-    ) -> Result<Vec<Value>> {
+    ) -> Result<Vec<Order>> {
         let mut p = Vec::new();
         if let Some(s) = state {
             p.push(("state", s.to_string()));
@@ -83,38 +61,66 @@ impl<T: Transport> Client<T> {
         if let Some(d) = days {
             p.push(("days", d.to_string()));
         }
-        let path = format!("/accounts/{}/orders", seg(account_id));
-        as_array(&path, self.get(&path, &self.scoped(&p))?)
+        let path = format!("/accounts/{}/orders", seg(account_id.into().as_str()));
+        list_from_value(&path, self.get(&path, &self.scoped(&p))?)
     }
 
     /// `GET /accounts/{accountId}/recentOrders`: last 24 hours only.
-    pub fn recent_orders(&self, account_id: &str, only_executed: bool) -> Result<Value> {
-        self.get(
-            &format!("/accounts/{}/recentOrders", seg(account_id)),
-            &self.scoped(&[("only_executed", only_executed.to_string())]),
+    pub fn recent_orders(
+        &self,
+        account_id: impl Into<AccountId>,
+        only_executed: bool,
+    ) -> Result<RecentOrders> {
+        let p = format!("/accounts/{}/recentOrders", seg(account_id.into().as_str()));
+        from_value(
+            &p,
+            self.get(
+                &p,
+                &self.scoped(&[("only_executed", only_executed.to_string())]),
+            )?,
         )
     }
 
     /// `POST /accounts/{accountId}/orders/details`.
-    pub fn order_detail(&self, account_id: &str, brokerage_order_id: &str) -> Result<Value> {
-        self.request(
-            Method::Post,
-            &format!("/accounts/{}/orders/details", seg(account_id)),
-            &self.scoped(&[]),
-            Some(&json!({ "brokerage_order_id": brokerage_order_id })),
+    pub fn order_detail(
+        &self,
+        account_id: impl Into<AccountId>,
+        brokerage_order_id: impl Into<BrokerageOrderId>,
+    ) -> Result<Order> {
+        let p = format!(
+            "/accounts/{}/orders/details",
+            seg(account_id.into().as_str())
+        );
+        from_value(
+            &p,
+            self.request(
+                Method::Post,
+                &p,
+                &self.scoped(&[]),
+                Some(&json!({ "brokerage_order_id": brokerage_order_id.into() })),
+            )?,
         )
     }
 
     // ---- quotes ----
 
     /// `GET /accounts/{accountId}/quotes`: `symbols` is comma-separated.
-    pub fn quotes(&self, account_id: &str, symbols: &str, use_ticker: bool) -> Result<Value> {
-        self.get(
-            &format!("/accounts/{}/quotes", seg(account_id)),
-            &self.scoped(&[
-                ("symbols", symbols.to_string()),
-                ("use_ticker", use_ticker.to_string()),
-            ]),
+    pub fn quotes(
+        &self,
+        account_id: impl Into<AccountId>,
+        symbols: &str,
+        use_ticker: bool,
+    ) -> Result<Vec<Quote>> {
+        let p = format!("/accounts/{}/quotes", seg(account_id.into().as_str()));
+        list_from_value(
+            &p,
+            self.get(
+                &p,
+                &self.scoped(&[
+                    ("symbols", symbols.to_string()),
+                    ("use_ticker", use_ticker.to_string()),
+                ]),
+            )?,
         )
     }
 
@@ -122,33 +128,47 @@ impl<T: Transport> Client<T> {
 
     /// `POST /trade/impact`: check the impact of an equity order. The response
     /// holds a `trade.id` for [`Client::place_checked_order`] (valid ~5 minutes).
-    pub fn order_impact(&self, order: &EquityOrder) -> Result<Value> {
-        self.request(
-            Method::Post,
+    pub fn order_impact(&self, order: &EquityOrder) -> Result<OrderImpact> {
+        from_value(
             "/trade/impact",
-            &self.scoped(&[]),
-            Some(&to_body(order)?),
+            self.request(
+                Method::Post,
+                "/trade/impact",
+                &self.scoped(&[]),
+                Some(&to_body(order)?),
+            )?,
         )
     }
 
     /// `POST /trade/{tradeId}`: place a previously checked order. **Moves money.**
-    pub fn place_checked_order(&self, trade_id: &str, wait_to_confirm: bool) -> Result<Value> {
-        self.request(
-            Method::Post,
-            &format!("/trade/{}", seg(trade_id)),
-            &self.scoped(&[]),
-            Some(&json!({ "wait_to_confirm": wait_to_confirm })),
+    pub fn place_checked_order(
+        &self,
+        trade_id: impl Into<TradeId>,
+        wait_to_confirm: bool,
+    ) -> Result<Order> {
+        let p = format!("/trade/{}", seg(trade_id.into().as_str()));
+        from_value(
+            &p,
+            self.request(
+                Method::Post,
+                &p,
+                &self.scoped(&[]),
+                Some(&json!({ "wait_to_confirm": wait_to_confirm })),
+            )?,
         )
     }
 
     /// `POST /trade/place`: place an equity order without a prior check.
     /// **Moves money.**
-    pub fn place_order(&self, order: &EquityOrder) -> Result<Value> {
-        self.request(
-            Method::Post,
+    pub fn place_order(&self, order: &EquityOrder) -> Result<Order> {
+        from_value(
             "/trade/place",
-            &self.scoped(&[]),
-            Some(&to_body(order)?),
+            self.request(
+                Method::Post,
+                "/trade/place",
+                &self.scoped(&[]),
+                Some(&to_body(order)?),
+            )?,
         )
     }
 
@@ -156,10 +176,13 @@ impl<T: Transport> Client<T> {
 
     /// `POST /accounts/{accountId}/trading/options/impact` (BETA). `order` is
     /// the documented body: `order_type`, `time_in_force`, `legs`, ...
-    pub fn option_impact(&self, account_id: &str, order: &Value) -> Result<Value> {
+    pub fn option_impact(&self, account_id: impl Into<AccountId>, order: &Value) -> Result<Value> {
         self.request(
             Method::Post,
-            &format!("/accounts/{}/trading/options/impact", seg(account_id)),
+            &format!(
+                "/accounts/{}/trading/options/impact",
+                seg(account_id.into().as_str())
+            ),
             &self.scoped(&[]),
             Some(order),
         )
@@ -167,10 +190,17 @@ impl<T: Transport> Client<T> {
 
     /// `POST /accounts/{accountId}/trading/options`: multi-leg option order.
     /// **Moves money.**
-    pub fn place_option_order(&self, account_id: &str, order: &Value) -> Result<Value> {
+    pub fn place_option_order(
+        &self,
+        account_id: impl Into<AccountId>,
+        order: &Value,
+    ) -> Result<Value> {
         self.request(
             Method::Post,
-            &format!("/accounts/{}/trading/options", seg(account_id)),
+            &format!(
+                "/accounts/{}/trading/options",
+                seg(account_id.into().as_str())
+            ),
             &self.scoped(&[]),
             Some(order),
         )
@@ -181,7 +211,7 @@ impl<T: Transport> Client<T> {
     /// `GET /accounts/{accountId}/trading/instruments/cryptocurrencyPairs`.
     pub fn crypto_pairs(
         &self,
-        account_id: &str,
+        account_id: impl Into<AccountId>,
         base: Option<&str>,
         quote: Option<&str>,
     ) -> Result<Value> {
@@ -195,18 +225,22 @@ impl<T: Transport> Client<T> {
         self.get(
             &format!(
                 "/accounts/{}/trading/instruments/cryptocurrencyPairs",
-                seg(account_id)
+                seg(account_id.into().as_str())
             ),
             &self.scoped(&p),
         )
     }
 
     /// `GET .../cryptocurrencyPairs/{instrumentSymbol}/quote`.
-    pub fn crypto_pair_quote(&self, account_id: &str, instrument_symbol: &str) -> Result<Value> {
+    pub fn crypto_pair_quote(
+        &self,
+        account_id: impl Into<AccountId>,
+        instrument_symbol: &str,
+    ) -> Result<Value> {
         self.get(
             &format!(
                 "/accounts/{}/trading/instruments/cryptocurrencyPairs/{}/quote",
-                seg(account_id),
+                seg(account_id.into().as_str()),
                 seg(instrument_symbol)
             ),
             &self.scoped(&[]),
@@ -214,20 +248,34 @@ impl<T: Transport> Client<T> {
     }
 
     /// `POST /accounts/{accountId}/trading/crypto/preview`.
-    pub fn preview_crypto_order(&self, account_id: &str, order: &Value) -> Result<Value> {
+    pub fn preview_crypto_order(
+        &self,
+        account_id: impl Into<AccountId>,
+        order: &Value,
+    ) -> Result<Value> {
         self.request(
             Method::Post,
-            &format!("/accounts/{}/trading/crypto/preview", seg(account_id)),
+            &format!(
+                "/accounts/{}/trading/crypto/preview",
+                seg(account_id.into().as_str())
+            ),
             &self.scoped(&[]),
             Some(order),
         )
     }
 
     /// `POST /accounts/{accountId}/trading/crypto`. **Moves money.**
-    pub fn place_crypto_order(&self, account_id: &str, order: &Value) -> Result<Value> {
+    pub fn place_crypto_order(
+        &self,
+        account_id: impl Into<AccountId>,
+        order: &Value,
+    ) -> Result<Value> {
         self.request(
             Method::Post,
-            &format!("/accounts/{}/trading/crypto", seg(account_id)),
+            &format!(
+                "/accounts/{}/trading/crypto",
+                seg(account_id.into().as_str())
+            ),
             &self.scoped(&[]),
             Some(order),
         )
@@ -236,31 +284,51 @@ impl<T: Transport> Client<T> {
     // ---- change / cancel ----
 
     /// `POST /accounts/{accountId}/trading/cancel`.
-    pub fn cancel_order(&self, account_id: &str, brokerage_order_id: &str) -> Result<Value> {
-        self.request(
-            Method::Post,
-            &format!("/accounts/{}/trading/cancel", seg(account_id)),
-            &self.scoped(&[]),
-            Some(&json!({ "brokerage_order_id": brokerage_order_id })),
+    pub fn cancel_order(
+        &self,
+        account_id: impl Into<AccountId>,
+        brokerage_order_id: impl Into<BrokerageOrderId>,
+    ) -> Result<Order> {
+        let p = format!(
+            "/accounts/{}/trading/cancel",
+            seg(account_id.into().as_str())
+        );
+        from_value(
+            &p,
+            self.request(
+                Method::Post,
+                &p,
+                &self.scoped(&[]),
+                Some(&json!({ "brokerage_order_id": brokerage_order_id.into() })),
+            )?,
         )
     }
 
     /// `POST /accounts/{accountId}/trading/replace`: `order` has
     /// `brokerage_order_id`, `action`, `order_type`, `time_in_force`, ...
-    pub fn replace_order(&self, account_id: &str, order: &Value) -> Result<Value> {
-        self.request(
-            Method::Post,
-            &format!("/accounts/{}/trading/replace", seg(account_id)),
-            &self.scoped(&[]),
-            Some(order),
+    pub fn replace_order(&self, account_id: impl Into<AccountId>, order: &Value) -> Result<Order> {
+        let p = format!(
+            "/accounts/{}/trading/replace",
+            seg(account_id.into().as_str())
+        );
+        from_value(
+            &p,
+            self.request(Method::Post, &p, &self.scoped(&[]), Some(order))?,
         )
     }
 
     /// `POST /accounts/{accountId}/trading/complex`: complex (OCO/OTO...) order.
-    pub fn place_complex_order(&self, account_id: &str, order: &Value) -> Result<Value> {
+    pub fn place_complex_order(
+        &self,
+        account_id: impl Into<AccountId>,
+        order: &Value,
+    ) -> Result<Value> {
         self.request(
             Method::Post,
-            &format!("/accounts/{}/trading/complex", seg(account_id)),
+            &format!(
+                "/accounts/{}/trading/complex",
+                seg(account_id.into().as_str())
+            ),
             &self.scoped(&[]),
             Some(order),
         )
@@ -275,13 +343,13 @@ mod tests {
     fn order() -> EquityOrder {
         EquityOrder {
             account_id: "acct".into(),
-            action: Action::Buy,
+            action: OrderAction::Buy,
             universal_symbol_id: Some("sym".into()),
             order_type: OrderType::Limit,
-            time_in_force: TimeInForce::Gtc,
-            price: Some(1.5),
+            time_in_force: TimeInForce::GoodTilCanceled,
+            price: Some("1.5".parse().unwrap()),
             stop: None,
-            units: Some(2.0),
+            units: Some(2.into()),
             notional_value: None,
             client_order_id: None,
         }
@@ -294,6 +362,8 @@ mod tests {
         assert_eq!(v["order_type"], "Limit");
         assert_eq!(v["time_in_force"], "GTC");
         assert!(v.get("stop").is_none());
+        assert_eq!(v["price"], 1.5);
+        assert_eq!(v["units"], 2.0);
     }
 
     #[test]
@@ -311,7 +381,7 @@ mod tests {
             resp(200, "[]"),
             resp(200, "{}"),
             resp(200, "{}"),
-            resp(200, "{}"),
+            resp(200, "[]"),
             resp(200, "{}"),
             resp(200, "{}"),
             resp(200, "{}"),

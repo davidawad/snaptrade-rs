@@ -156,7 +156,7 @@ impl CredentialProvider for EnvProvider {
 /// manager or secret store CLI can be plugged in without code:
 ///
 /// ```no_run
-/// use snaptrade::credentials::CommandProvider;
+/// use snaptrade_rs::credentials::CommandProvider;
 /// let p = CommandProvider::new("my-secret-tool", ["get", "snaptrade", "--field", "{field}"]);
 /// ```
 ///

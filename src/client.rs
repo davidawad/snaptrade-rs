@@ -105,7 +105,7 @@ impl<T: Transport> Client<T> {
 
     /// Query pairs for an account-scoped call: caller params plus
     /// `userId`/`userSecret` when a user is attached.
-    pub(crate) fn scoped<'a>(&self, params: &[(&'a str, String)]) -> Vec<(&'a str, String)> {
+    pub fn scoped<'a>(&self, params: &[(&'a str, String)]) -> Vec<(&'a str, String)> {
         let mut v: Vec<(&'a str, String)> = params.to_vec();
         if let Some(u) = &self.user {
             v.push(("userId", u.user_id.clone()));
@@ -114,9 +114,22 @@ impl<T: Transport> Client<T> {
         v
     }
 
-    /// Signed GET; `path` excludes the API prefix (e.g. `/accounts`).
+    /// Signed GET returning the raw JSON; `path` excludes the API prefix
+    /// (e.g. `/accounts`). This is the escape hatch from the typed models:
+    /// pair it with [`Client::scoped`] to attach the user, e.g.
+    /// `client.get("/accounts", &client.scoped(&[]))`.
     pub fn get(&self, path: &str, params: &[(&str, String)]) -> Result<Value> {
         self.request(Method::Get, path, params, None)
+    }
+
+    /// Signed GET decoded into any type of yours. Use it for a response shape
+    /// the bundled models do not cover.
+    pub fn get_as<R: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        params: &[(&str, String)],
+    ) -> Result<R> {
+        from_value(path, self.get(path, params)?)
     }
 
     /// Signed request with retry. A fresh timestamp and signature are made for
@@ -199,6 +212,50 @@ fn decode(path: &str, r: &HttpResponse) -> Result<Value> {
         path: path.into(),
         message: format!("invalid JSON: {e}"),
     })
+}
+
+/// Decode a JSON value into a model. The error message never echoes response
+/// values (serde messages can quote them), only the kind of mismatch.
+pub(crate) fn from_value<R: serde::de::DeserializeOwned>(path: &str, v: Value) -> Result<R> {
+    serde_json::from_value(v).map_err(|e| Error::Decode {
+        path: path.into(),
+        message: scrub(&e.to_string()),
+    })
+}
+
+/// Decode a JSON array into a list of models, naming the failing index.
+pub(crate) fn list_from_value<R: serde::de::DeserializeOwned>(
+    path: &str,
+    v: Value,
+) -> Result<Vec<R>> {
+    as_array(path, v)?
+        .into_iter()
+        .enumerate()
+        .map(|(i, item)| {
+            serde_json::from_value(item).map_err(|e| Error::Decode {
+                path: path.into(),
+                message: format!("item {i}: {}", scrub(&e.to_string())),
+            })
+        })
+        .collect()
+}
+
+/// Drop quoted text from a serde error message (it may hold account data).
+fn scrub(msg: &str) -> String {
+    let mut out = String::new();
+    let mut in_quote = false;
+    for c in msg.chars() {
+        match (c, in_quote) {
+            ('"', false) => {
+                in_quote = true;
+                out.push_str("\"...\"");
+            }
+            ('"', true) => in_quote = false,
+            (_, true) => {}
+            (c, false) => out.push(c),
+        }
+    }
+    out
 }
 
 /// Require a JSON array, for list endpoints.

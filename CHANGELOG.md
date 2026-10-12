@@ -6,6 +6,20 @@ All notable changes are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+- Renamed the package to `snaptrade-rs` (library `snaptrade_rs`, binary
+  `snaptrade-rs`). Repository: https://github.com/davidawad/snaptrade-rs.
+- Responses are now typed (`snaptrade_rs::models`) instead of
+  `serde_json::Value`: newtype ids, text-backed `Decimal`, `chrono` dates,
+  `#[non_exhaustive]` enums with `Unknown`, and an `extra` map on every model.
+  Raw access remains via `Client::get` / `Client::get_as`.
+- Methods take `impl Into<AccountId>` / `ConnectionId` / `UserId` /
+  `BrokerageOrderId` / `TradeId` instead of `&str`.
+- `trading`: `EquityOrder` uses `Decimal` and typed enums; order responses are
+  typed (`Order`, `RecentOrders`, `Quote`, `OrderImpact`).
+- Decode errors no longer echo response values.
+- MSRV is Rust 1.85 (verified with the committed lockfile).
+
 ## [0.1.0]
 
 Initial release.

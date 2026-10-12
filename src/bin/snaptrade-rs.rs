@@ -1,4 +1,4 @@
-//! `snaptrade`: read-only command-line client built on the `snaptrade` crate.
+//! `snaptrade-rs`: read-only command-line client built on the `snaptrade-rs` crate.
 //! Order and trading endpoints are not exposed here regardless of crate features.
 //!
 //! Credentials: `--cred-source env` (default; SNAPTRADE_CLIENT_ID and
@@ -7,12 +7,13 @@
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde_json::Value;
-use snaptrade::credentials::{CommandProvider, CredentialProvider, EnvProvider, FileProvider};
-use snaptrade::export::{self, Format};
-use snaptrade::mask::mask_number;
-use snaptrade::select::Selector;
-use snaptrade::transport::Transport;
-use snaptrade::{ActivityQuery, Client};
+use snaptrade_rs::credentials::{CommandProvider, CredentialProvider, EnvProvider, FileProvider};
+use snaptrade_rs::export::{self, Format};
+use snaptrade_rs::mask::mask_number;
+use snaptrade_rs::models::Account;
+use snaptrade_rs::select::Selector;
+use snaptrade_rs::transport::Transport;
+use snaptrade_rs::{ActivityQuery, Client};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -23,7 +24,7 @@ enum Source {
 }
 
 #[derive(Parser)]
-#[command(name = "snaptrade", version, about = "Read-only SnapTrade client.")]
+#[command(name = "snaptrade-rs", version, about = "Read-only SnapTrade client.")]
 struct Cli {
     #[arg(long, value_enum, default_value = "env", global = true)]
     cred_source: Source,
@@ -34,7 +35,7 @@ struct Cli {
     /// consumer_key. Split on whitespace, run without a shell.
     #[arg(long, global = true)]
     cred_command: Option<String>,
-    #[arg(long, default_value = snaptrade::client::DEFAULT_BASE_URL, global = true)]
+    #[arg(long, default_value = snaptrade_rs::client::DEFAULT_BASE_URL, global = true)]
     base_url: String,
     /// Print what would be requested; send nothing.
     #[arg(long, global = true)]
@@ -112,7 +113,7 @@ fn provider(cli: &Cli) -> Result<Box<dyn CredentialProvider>, String> {
     })
 }
 
-fn select<'a>(accounts: &'a [Value], s: &Sel) -> Result<Vec<&'a Value>, String> {
+fn select<'a>(accounts: &'a [Account], s: &Sel) -> Result<Vec<&'a Account>, String> {
     let m = Selector {
         id: s.account_id.clone(),
         brokerage: s.brokerage.clone(),
@@ -120,20 +121,24 @@ fn select<'a>(accounts: &'a [Value], s: &Sel) -> Result<Vec<&'a Value>, String> 
     }
     .filter(accounts);
     if m.is_empty() {
-        Err("no account matches the selector (run `snaptrade accounts`)".into())
+        Err("no account matches the selector (run `snaptrade-rs accounts`)".into())
     } else {
         Ok(m)
     }
 }
 
-fn account_line(a: &Value) -> String {
+fn account_line(a: &Account) -> String {
     format!(
         "{}  {}  {}  {}",
-        a["id"].as_str().unwrap_or(""),
-        a["institution_name"].as_str().unwrap_or(""),
-        a["name"].as_str().unwrap_or(""),
-        mask_number(a["number"].as_str().unwrap_or("")),
+        a.id,
+        a.institution_name.as_deref().unwrap_or(""),
+        a.name.as_deref().unwrap_or(""),
+        mask_number(a.number.as_deref().unwrap_or("")),
     )
+}
+
+fn json_value(v: &impl serde::Serialize) -> Result<Value, String> {
+    serde_json::to_value(v).map_err(|e| e.to_string())
 }
 
 fn pretty(v: &impl serde::Serialize) -> Result<(), String> {
@@ -145,7 +150,7 @@ fn pretty(v: &impl serde::Serialize) -> Result<(), String> {
 }
 
 fn run<T: Transport>(cli: &Cli, cl: &Client<T>) -> Result<(), String> {
-    let e = |x: snaptrade::Error| x.to_string();
+    let e = |x: snaptrade_rs::Error| x.to_string();
     match &cli.cmd {
         Cmd::Status => pretty(&cl.api_status().map_err(e)?),
         Cmd::Connections => {
@@ -156,9 +161,12 @@ fn run<T: Transport>(cli: &Cli, cl: &Client<T>) -> Result<(), String> {
             for r in &rows {
                 println!(
                     "{}  {}  disabled={}",
-                    r["id"].as_str().unwrap_or(""),
-                    r["brokerage"]["name"].as_str().unwrap_or(""),
-                    r["disabled"]
+                    r.id,
+                    r.brokerage
+                        .as_ref()
+                        .and_then(|b| b.name.as_deref())
+                        .unwrap_or(""),
+                    r.disabled.map_or("unknown".to_string(), |d| d.to_string())
                 );
             }
             Ok(())
@@ -178,14 +186,14 @@ fn run<T: Transport>(cli: &Cli, cl: &Client<T>) -> Result<(), String> {
             shown.iter().for_each(|a| println!("{}", account_line(a)));
             Ok(())
         }
-        Cmd::Balances(s) => per_account(cl, s, |id| Ok(Value::Array(cl.balances(id).map_err(e)?))),
-        Cmd::Positions(s) => {
-            per_account(cl, s, |id| Ok(Value::Array(cl.positions(id).map_err(e)?)))
+        Cmd::Balances(s) => per_account(cl, s, |id| json_value(&cl.balances(id).map_err(e)?)),
+        Cmd::Positions(s) => per_account(cl, s, |id| json_value(&cl.positions(id).map_err(e)?)),
+        Cmd::AllPositions(s) => {
+            per_account(cl, s, |id| json_value(&cl.all_positions(id).map_err(e)?))
         }
-        Cmd::AllPositions(s) => per_account(cl, s, |id| cl.all_positions(id).map_err(e)),
-        Cmd::Options(s) => per_account(cl, s, |id| {
-            Ok(Value::Array(cl.option_positions(id).map_err(e)?))
-        }),
+        Cmd::Options(s) => {
+            per_account(cl, s, |id| json_value(&cl.option_positions(id).map_err(e)?))
+        }
         Cmd::Activities {
             sel,
             from,
@@ -197,7 +205,7 @@ fn run<T: Transport>(cli: &Cli, cl: &Client<T>) -> Result<(), String> {
             let fmt = Format::parse(format)?;
             let all = cl.accounts().map_err(e)?;
             for a in select(&all, sel)? {
-                let id = a["id"].as_str().unwrap_or("");
+                let id = &a.id;
                 let stem = export::file_stem(a, from.as_deref(), to.as_deref());
                 if cli.dry_run {
                     println!("DRY-RUN {}", account_line(a));
@@ -224,12 +232,12 @@ fn run<T: Transport>(cli: &Cli, cl: &Client<T>) -> Result<(), String> {
 fn per_account<T: Transport>(
     cl: &Client<T>,
     s: &Sel,
-    f: impl Fn(&str) -> Result<Value, String>,
+    f: impl Fn(&snaptrade_rs::models::AccountId) -> Result<Value, String>,
 ) -> Result<(), String> {
     let all = cl.accounts().map_err(|x| x.to_string())?;
     for a in select(&all, s)? {
         println!("# {}", account_line(a));
-        pretty(&f(a["id"].as_str().unwrap_or(""))?)?;
+        pretty(&f(&a.id)?)?;
     }
     Ok(())
 }
@@ -245,14 +253,14 @@ fn main() {
             .map(|c| {
                 let page = match &cli.cmd {
                     Cmd::Activities { page_limit, .. } => *page_limit,
-                    _ => snaptrade::client::DEFAULT_PAGE_LIMIT,
+                    _ => snaptrade_rs::client::DEFAULT_PAGE_LIMIT,
                 };
                 c.base_url(&cli.base_url).page_limit(page)
             })
             .and_then(|c| run(&cli, &c))
     };
     if let Err(e) = result {
-        eprintln!("snaptrade: {e}");
+        eprintln!("snaptrade-rs: {e}");
         std::process::exit(1);
     }
 }

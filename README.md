@@ -1,45 +1,64 @@
-# snaptrade
+# snaptrade-rs
 
 Unofficial Rust client for the [SnapTrade](https://snaptrade.com) brokerage
-aggregation API. Not affiliated with or endorsed by SnapTrade.
+aggregation API. **Unofficial: not affiliated with, endorsed by or supported by
+SnapTrade.** "SnapTrade" is a trademark of its owner. The official SDKs
+(TypeScript, Python, Java, Go, Ruby, PHP, C#) live at
+<https://github.com/passiv/snaptrade-sdks>; there is no official Rust SDK.
+
+> **Trading warning.** The optional `trading` cargo feature adds endpoints that
+> **place, replace and cancel real orders and move real money**. It is **off by
+> default**, is never enabled by another feature (including `cli`), and the CLI
+> never exposes it. Enable it only on purpose, test against a paper account,
+> and read the [Trading](#trading-feature-trading-off-by-default) section first.
+> You are responsible for every order your code sends. No warranty; not
+> financial advice.
 
 - HMAC-SHA256 signed requests (fresh timestamp and signature on every attempt)
 - Pagination, `Retry-After`-aware exponential backoff on 429 and 5xx
+- Strongly typed responses: newtype ids, text-backed `Decimal` money, `chrono`
+  dates, `#[non_exhaustive]` enums with an `Unknown` fallback, and an `extra`
+  map on every model so new API fields are never lost
 - Typed errors, including HTTP 410 "not available for your account"
 - Pluggable credentials: environment, external command, file, or your own trait impl
 - Mockable transport: the whole test suite runs offline
 - Order and trading endpoints only behind the **`trading`** cargo feature (off by default)
-- Optional read-only `snaptrade` CLI behind the `cli` feature
+- Optional read-only `snaptrade-rs` CLI behind the `cli` feature
 
 ## Install
 
 ```toml
 [dependencies]
-snaptrade = "0.1"
-# order placement / order history (off by default, read the warning below):
-# snaptrade = { version = "0.1", features = ["trading"] }
+snaptrade-rs = "0.1"
+# order placement / order history (off by default, read the warning above):
+# snaptrade-rs = { version = "0.1", features = ["trading"] }
 ```
 
 CLI:
 
 ```sh
-cargo install snaptrade --features cli
+cargo install snaptrade-rs --features cli
 ```
 
 ## Quick start
 
 ```rust
-use snaptrade::{credentials::EnvProvider, Client};
+use snaptrade_rs::{credentials::EnvProvider, Client};
 
-fn main() -> Result<(), snaptrade::Error> {
+fn main() -> Result<(), snaptrade_rs::Error> {
     // SNAPTRADE_CLIENT_ID and SNAPTRADE_CONSUMER_KEY
     let client = Client::from_provider(&EnvProvider::new())?;
     for account in client.accounts()? {
-        println!("{}", account["id"]);
+        println!("{} {:?}", account.id, account.institution_name);
+        for b in client.balances(&account.id)? {
+            println!("  cash {:?}", b.cash); // Option<Decimal>, exact text
+        }
     }
     Ok(())
 }
 ```
+
+The crate is `snaptrade-rs`; in code it is `snaptrade_rs`.
 
 See `examples/` for balances, activity export and a custom credential provider.
 
@@ -87,7 +106,7 @@ Paths are relative to `/api/v1` (the prefix is part of the signed path;
 override with `Client::api_prefix`). Source of truth: the
 [SnapTrade API reference](https://docs.snaptrade.com/reference) and
 [request signature guide](https://docs.snaptrade.com/docs/request-signatures).
-`snaptrade::endpoints()` returns this table at runtime.
+`snaptrade_rs::endpoints()` returns this table at runtime.
 
 | Area | Method | Path | Client fn |
 | --- | --- | --- | --- |
@@ -124,17 +143,55 @@ SnapTrade's former standalone "reporting" endpoints are not in the current
 reference; transaction history and performance data come from `activities` and
 `balance_history`.
 
+## Typed models
+
+`snaptrade_rs::models` covers accounts, balances, positions, option positions,
+activities, connections, users/status, symbols and (with `trading`) orders,
+quotes and order impact.
+
+- Ids are newtypes: `AccountId`, `ConnectionId`, `UserId`, `SymbolId`,
+  `ActivityId`, `BrokerageOrderId`, `TradeId`. Methods take
+  `impl Into<AccountId>` etc., so `"abc"`, a `String` or a `&AccountId` all
+  work, but a `ConnectionId` will not compile where an account id is wanted.
+  `UserSecret` has a redacted `Debug` and no `Display`.
+- Money, prices and quantities are `Decimal`: the number text exactly as the
+  API sent it (`10.50` stays `10.50`), with `to_f64()` when you need a float.
+  It serialises as a JSON number.
+- Timestamps are `chrono::DateTime<Utc>`, calendar dates `chrono::NaiveDate`.
+  Date-only and offset-less timestamps are accepted.
+- Enums (`ActivityType`, `OptionType`, `ConnectionType`, and with `trading`
+  `OrderAction`, `OrderType`, `TimeInForce`, `OrderStatus`) are
+  `#[non_exhaustive]` with `Unknown(String)`, so a new value never fails a
+  decode. Always keep a wildcard arm.
+- Almost every field is `Option` (brokerages differ); only a record's own id is
+  required. Every model has an `extra` map holding fields not modelled.
+- Escape hatches: `Client::get` returns the raw `serde_json::Value`
+  (`client.get("/accounts", &client.scoped(&[]))`), `Client::get_as::<T>`
+  decodes into your own type, and balance history, partner info, brokerage
+  instruments, option/crypto/complex order bodies stay `serde_json::Value`.
+- Decode errors name the path and the failing item index but never echo
+  response values.
+
+The shapes follow the [SnapTrade API reference](https://docs.snaptrade.com/reference)
+and were checked with mocked responses (`tests/models.rs`), not against a live
+account. If a real response fails to decode, please open an issue with a
+redacted sample.
+
 ### Not covered
 
-Webhook signature verification, the deprecated holdings endpoints, and typed
-response models (responses are `serde_json::Value`, because SnapTrade and the
-brokerages add fields frequently).
+Webhook signature verification and the deprecated holdings endpoints.
 
 ## Trading (feature `trading`, off by default)
 
 ```toml
-snaptrade = { version = "0.1", features = ["trading"] }
+snaptrade-rs = { version = "0.1", features = ["trading"] }
 ```
+
+**Off by default, and nothing turns it on for you**: neither `default` nor `cli`
+enables it, the CLI never calls these endpoints, and CI checks that the default
+build has no order endpoint. It must be named explicitly in your `Cargo.toml`.
+Because cargo unifies features, any other crate in your dependency tree that
+enables `trading` also enables it for you: check `cargo tree -e features`.
 
 Adds order history (`orders`, `recent_orders`, `order_detail`), `quotes`,
 `order_impact`, `place_checked_order`, `place_order`, option, crypto and complex
@@ -155,10 +212,10 @@ masked to the last four digits).
 
 ```sh
 export SNAPTRADE_CLIENT_ID=... SNAPTRADE_CONSUMER_KEY=...
-snaptrade accounts
-snaptrade activities --brokerage example --last4 1234 --from 2024-01-01 --out-dir ./out
-snaptrade --cred-source command --cred-command "my-vault get snaptrade {field}" connections
-snaptrade --cred-source file --cred-file ./creds.env accounts
+snaptrade-rs accounts
+snaptrade-rs activities --brokerage example --last4 1234 --from 2024-01-01 --out-dir ./out
+snaptrade-rs --cred-source command --cred-command "my-vault get snaptrade {field}" connections
+snaptrade-rs --cred-source file --cred-file ./creds.env accounts
 ```
 
 ## Testing
@@ -168,8 +225,9 @@ cargo test                       # default features
 cargo test --features cli,trading
 ```
 
-All tests use a mocked transport with fixed fake values; there is no network
-access and no real account data.
+All tests use a mocked transport with fixed fake values modelled on the
+shapes in the official API reference; there is no network access and no real
+account data. Minimum supported Rust version: 1.85 (verified with the committed `Cargo.lock`; CI builds it).
 
 ## License
 

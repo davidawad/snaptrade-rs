@@ -2,6 +2,9 @@
 //!
 //! * HMAC-SHA256 signed requests ([`sign`]), fresh timestamp per attempt.
 //! * Pagination, `Retry-After`-aware exponential backoff on 429/5xx.
+//! * Typed response [`models`]: newtype ids, text-backed [`models::Decimal`]
+//!   money, `chrono` dates, `#[non_exhaustive]` enums with an `Unknown`
+//!   fallback and an `extra` map for fields not modelled yet.
 //! * Typed [`Error`]s, including HTTP 410 ([`Error::NotAvailable`]).
 //! * Pluggable secrets via [`credentials::CredentialProvider`]: environment,
 //!   external command, file, or your own.
@@ -12,13 +15,13 @@
 //! cancel or even list orders.
 //!
 //! ```no_run
-//! use snaptrade::{credentials::EnvProvider, Client};
+//! use snaptrade_rs::{credentials::EnvProvider, Client};
 //!
-//! # fn main() -> Result<(), snaptrade::Error> {
+//! # fn main() -> Result<(), snaptrade_rs::Error> {
 //! // SNAPTRADE_CLIENT_ID and SNAPTRADE_CONSUMER_KEY in the environment.
 //! let client = Client::from_provider(&EnvProvider::new())?;
 //! for account in client.accounts()? {
-//!     println!("{}", account["id"]);
+//!     println!("{}", account.id);
 //! }
 //! # Ok(()) }
 //! ```
@@ -36,10 +39,13 @@ pub mod credentials;
 pub mod error;
 pub mod export;
 pub mod mask;
+pub mod models;
 pub mod select;
 pub mod sign;
 pub mod transport;
 
+#[cfg(feature = "trading")]
+pub use api::EquityOrder;
 pub use api::{endpoints, ActivityQuery, Endpoint, LoginOptions};
 pub use client::Client;
 pub use credentials::{CredentialProvider, Credentials, UserAuth};

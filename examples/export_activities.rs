@@ -3,9 +3,9 @@
 //!
 //!   cargo run --example export_activities -- creds.env <account-id> ./out
 
-use snaptrade::credentials::FileProvider;
-use snaptrade::export::{self, Format};
-use snaptrade::{ActivityQuery, Client, Error};
+use snaptrade_rs::credentials::FileProvider;
+use snaptrade_rs::export::{self, Format};
+use snaptrade_rs::{ActivityQuery, Client, Error};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -18,9 +18,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let accounts = client.accounts()?;
     let account = accounts
         .iter()
-        .find(|a| a["id"] == account_id.as_str())
+        .find(|a| a.id.as_str() == account_id.as_str())
         .ok_or("account id not found")?;
-    let acts = match client.activities(account_id, &ActivityQuery::new()) {
+    let acts = match client.activities(account_id.as_str(), &ActivityQuery::new()) {
         Err(e @ Error::NotAvailable { .. }) => {
             eprintln!("not available on this plan: {e}");
             return Ok(());

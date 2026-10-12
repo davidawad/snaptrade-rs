@@ -1,8 +1,11 @@
 //! Account information: accounts, balances, positions, option positions,
 //! activities (transaction history and reporting).
 
-use crate::client::{as_array, seg, Client};
+use crate::client::{from_value, list_from_value, seg, Client};
 use crate::error::{Error, Result};
+use crate::models::{
+    Account, AccountId, Activity, AllPositions, Balance, OptionPosition, Position,
+};
 use crate::transport::Transport;
 use serde_json::Value;
 
@@ -56,41 +59,44 @@ impl ActivityQuery {
 
 impl<T: Transport> Client<T> {
     /// `GET /accounts`.
-    pub fn accounts(&self) -> Result<Vec<Value>> {
-        as_array("/accounts", self.get("/accounts", &self.scoped(&[]))?)
+    pub fn accounts(&self) -> Result<Vec<Account>> {
+        list_from_value("/accounts", self.get("/accounts", &self.scoped(&[]))?)
     }
 
     /// `GET /accounts/all`: accounts including those on disabled connections.
-    pub fn all_accounts(&self) -> Result<Vec<Value>> {
-        as_array(
+    pub fn all_accounts(&self) -> Result<Vec<Account>> {
+        list_from_value(
             "/accounts/all",
             self.get("/accounts/all", &self.scoped(&[]))?,
         )
     }
 
     /// `GET /accounts/{accountId}`.
-    pub fn account(&self, account_id: &str) -> Result<Value> {
-        self.get(&format!("/accounts/{}", seg(account_id)), &self.scoped(&[]))
+    pub fn account(&self, account_id: impl Into<AccountId>) -> Result<Account> {
+        let p = format!("/accounts/{}", seg(account_id.into().as_str()));
+        from_value(&p, self.get(&p, &self.scoped(&[]))?)
     }
 
     /// `GET /accounts/{accountId}/details`.
-    pub fn account_details(&self, account_id: &str) -> Result<Value> {
-        self.get(
-            &format!("/accounts/{}/details", seg(account_id)),
-            &self.scoped(&[]),
-        )
+    pub fn account_details(&self, account_id: impl Into<AccountId>) -> Result<Account> {
+        let p = format!("/accounts/{}/details", seg(account_id.into().as_str()));
+        from_value(&p, self.get(&p, &self.scoped(&[]))?)
     }
 
     /// `GET /accounts/{accountId}/balances`: one row per currency.
-    pub fn balances(&self, account_id: &str) -> Result<Vec<Value>> {
-        let p = format!("/accounts/{}/balances", seg(account_id));
-        as_array(&p, self.get(&p, &self.scoped(&[]))?)
+    pub fn balances(&self, account_id: impl Into<AccountId>) -> Result<Vec<Balance>> {
+        let p = format!("/accounts/{}/balances", seg(account_id.into().as_str()));
+        list_from_value(&p, self.get(&p, &self.scoped(&[]))?)
     }
 
-    /// `GET /accounts/{accountId}/balanceHistory` (BETA): historical total value.
-    pub fn balance_history(&self, account_id: &str) -> Result<Value> {
+    /// `GET /accounts/{accountId}/balanceHistory` (BETA): historical total
+    /// value. Returned as raw JSON: the shape is not stable enough to pin.
+    pub fn balance_history(&self, account_id: impl Into<AccountId>) -> Result<Value> {
         self.get(
-            &format!("/accounts/{}/balanceHistory", seg(account_id)),
+            &format!(
+                "/accounts/{}/balanceHistory",
+                seg(account_id.into().as_str())
+            ),
             &self.scoped(&[]),
         )
     }
@@ -102,39 +108,47 @@ impl<T: Transport> Client<T> {
     /// use [`Client::all_positions`] or check the error. This path is taken
     /// from SnapTrade's endpoint index and official SDKs, because the docs'
     /// reference page for it was not retrievable when this crate was written.
-    pub fn positions(&self, account_id: &str) -> Result<Vec<Value>> {
-        let p = format!("/accounts/{}/positions", seg(account_id));
-        as_array(&p, self.get(&p, &self.scoped(&[]))?)
+    pub fn positions(&self, account_id: impl Into<AccountId>) -> Result<Vec<Position>> {
+        let p = format!("/accounts/{}/positions", seg(account_id.into().as_str()));
+        list_from_value(&p, self.get(&p, &self.scoped(&[]))?)
     }
 
     /// `GET /accounts/{accountId}/positions/all`: positions across all
     /// instrument types (stocks, ETFs, mutual funds, crypto, futures, options).
-    pub fn all_positions(&self, account_id: &str) -> Result<Value> {
-        self.get(
-            &format!("/accounts/{}/positions/all", seg(account_id)),
-            &self.scoped(&[]),
-        )
+    pub fn all_positions(&self, account_id: impl Into<AccountId>) -> Result<AllPositions> {
+        let p = format!(
+            "/accounts/{}/positions/all",
+            seg(account_id.into().as_str())
+        );
+        from_value(&p, self.get(&p, &self.scoped(&[]))?)
     }
 
     /// `GET /accounts/{accountId}/options`: option positions (holdings).
     ///
     /// Same sourcing note as [`Client::positions`].
-    pub fn option_positions(&self, account_id: &str) -> Result<Vec<Value>> {
-        let p = format!("/accounts/{}/options", seg(account_id));
-        as_array(&p, self.get(&p, &self.scoped(&[]))?)
+    pub fn option_positions(
+        &self,
+        account_id: impl Into<AccountId>,
+    ) -> Result<Vec<OptionPosition>> {
+        let p = format!("/accounts/{}/options", seg(account_id.into().as_str()));
+        list_from_value(&p, self.get(&p, &self.scoped(&[]))?)
     }
 
     /// `GET /accounts/{accountId}/activities`: the full history for the filter,
     /// following `offset`/`limit` pagination (page size from
     /// [`Client::page_limit`]; SnapTrade caps it at 1000) until `total` is
     /// reached or a page is empty.
-    pub fn activities(&self, account_id: &str, q: &ActivityQuery) -> Result<Vec<Value>> {
-        let path = format!("/accounts/{}/activities", seg(account_id));
+    pub fn activities(
+        &self,
+        account_id: impl Into<AccountId>,
+        q: &ActivityQuery,
+    ) -> Result<Vec<Activity>> {
+        let path = format!("/accounts/{}/activities", seg(account_id.into().as_str()));
         let mut params = q.params()?;
         for (k, v) in self.scoped(&[]) {
             params.push((k, v));
         }
-        self.paginate(&path, &params)
+        list_from_value(&path, Value::Array(self.paginate(&path, &params)?))
     }
 }
 
@@ -198,8 +212,8 @@ mod tests {
         let (c, seen, _) = client(vec![
             resp(200, "[]"),
             resp(200, "[]"),
-            resp(200, "{}"),
-            resp(200, "{}"),
+            resp(200, r#"{"id":"a"}"#),
+            resp(200, r#"{"id":"a"}"#),
             resp(200, "[]"),
             resp(200, "{}"),
             resp(200, "{}"),

@@ -1,6 +1,8 @@
 //! CSV/JSON export of activities. Account numbers are masked everywhere.
 
 use crate::mask::mask_number;
+use crate::models::{Account, Activity, Decimal};
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -68,50 +70,59 @@ pub const CSV_HEADER: [&str; 15] = [
     "external_reference_id",
 ];
 
-fn text(v: &Value) -> String {
-    match v {
-        Value::Null => String::new(),
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
+fn dt(d: Option<DateTime<Utc>>) -> String {
+    d.map(|d| d.to_rfc3339_opts(SecondsFormat::Secs, true))
+        .unwrap_or_default()
 }
 
-fn symbol(a: &Value) -> String {
-    let s = &a["symbol"];
-    if let Some(t) = s["symbol"].as_str() {
-        return t.to_string();
-    }
-    if let Some(t) = s.as_str() {
-        return t.to_string();
-    }
-    a["option_symbol"]["ticker"]
-        .as_str()
-        .unwrap_or("")
-        .to_string()
+fn dec(d: &Option<Decimal>) -> String {
+    d.as_ref().map(|d| d.to_string()).unwrap_or_default()
+}
+
+fn opt(s: &Option<String>) -> String {
+    s.clone().unwrap_or_default()
+}
+
+fn symbol(a: &Activity) -> String {
+    a.symbol
+        .as_ref()
+        .and_then(|s| s.symbol.clone())
+        .or_else(|| a.option_symbol.as_ref().and_then(|o| o.ticker.clone()))
+        .unwrap_or_default()
+}
+
+fn number(account: &Account) -> &str {
+    account.number.as_deref().unwrap_or("")
 }
 
 /// One CSV row per activity, in `CSV_HEADER` order.
-pub fn row(account: &Value, a: &Value) -> Vec<String> {
+pub fn row(account: &Account, a: &Activity) -> Vec<String> {
     vec![
-        text(&account["id"]),
-        mask_number(account["number"].as_str().unwrap_or("")),
-        text(&account["institution_name"]),
-        text(&a["id"]),
-        text(&a["trade_date"]),
-        text(&a["settlement_date"]),
-        text(&a["type"]),
+        account.id.to_string(),
+        mask_number(number(account)),
+        opt(&account.institution_name),
+        a.id.as_ref().map(|i| i.to_string()).unwrap_or_default(),
+        dt(a.trade_date),
+        dt(a.settlement_date),
+        a.activity_type
+            .as_ref()
+            .map(|t| t.to_string())
+            .unwrap_or_default(),
         symbol(a),
-        text(&a["description"]),
-        text(&a["amount"]),
-        text(&a["currency"]["code"]),
-        text(&a["units"]),
-        text(&a["price"]),
-        text(&a["fee"]),
-        text(&a["external_reference_id"]),
+        opt(&a.description),
+        dec(&a.amount),
+        a.currency
+            .as_ref()
+            .and_then(|c| c.code.clone())
+            .unwrap_or_default(),
+        dec(&a.units),
+        dec(&a.price),
+        dec(&a.fee),
+        opt(&a.external_reference_id),
     ]
 }
 
-pub fn to_csv(account: &Value, activities: &[Value]) -> Result<String, String> {
+pub fn to_csv(account: &Account, activities: &[Activity]) -> Result<String, String> {
     let mut w = csv::Writer::from_writer(Vec::new());
     w.write_record(CSV_HEADER).map_err(|e| e.to_string())?;
     for a in activities {
@@ -123,20 +134,24 @@ pub fn to_csv(account: &Value, activities: &[Value]) -> Result<String, String> {
 
 /// Account summary with the number masked; never includes the raw number or
 /// the brokerage's opaque institution_account_id.
-pub fn masked_account(account: &Value) -> Value {
+pub fn masked_account(account: &Account) -> Value {
+    let tx = account
+        .sync_status
+        .as_ref()
+        .and_then(|s| s.transactions.as_ref());
     json!({
-        "id": account["id"],
-        "institution": account["institution_name"],
-        "name": account["name"],
-        "number_masked": mask_number(account["number"].as_str().unwrap_or("")),
-        "type": account["raw_type"],
-        "status": account["status"],
-        "first_transaction_date": account["sync_status"]["transactions"]["first_transaction_date"],
-        "last_transaction_sync": account["sync_status"]["transactions"]["last_successful_sync"],
+        "id": account.id,
+        "institution": account.institution_name,
+        "name": account.name,
+        "number_masked": mask_number(number(account)),
+        "type": account.raw_type,
+        "status": account.status,
+        "first_transaction_date": tx.and_then(|t| t.first_transaction_date),
+        "last_transaction_sync": tx.and_then(|t| t.last_successful_sync),
     })
 }
 
-pub fn to_json(account: &Value, activities: &[Value]) -> Result<String, String> {
+pub fn to_json(account: &Account, activities: &[Activity]) -> Result<String, String> {
     serde_json::to_string_pretty(&json!({
         "account": masked_account(account),
         "count": activities.len(),
@@ -146,13 +161,11 @@ pub fn to_json(account: &Value, activities: &[Value]) -> Result<String, String> 
 }
 
 /// File stem: `snaptrade_<institution>_<last4>_<from|start>_<to|latest>`.
-pub fn file_stem(account: &Value, from: Option<&str>, to: Option<&str>) -> String {
-    let inst = sanitize_component(account["institution_name"].as_str().unwrap_or("unknown"))
+pub fn file_stem(account: &Account, from: Option<&str>, to: Option<&str>) -> String {
+    let inst = sanitize_component(account.institution_name.as_deref().unwrap_or("unknown"))
         .replace(' ', "-")
         .to_lowercase();
-    let tail = mask_number(account["number"].as_str().unwrap_or(""))
-        .replace('*', "")
-        .to_lowercase();
+    let tail = mask_number(number(account)).replace('*', "").to_lowercase();
     format!(
         "snaptrade_{inst}_{}_{}_{}",
         if tail.is_empty() { "xxxx".into() } else { tail },
@@ -177,8 +190,8 @@ pub fn write_exports(
     dir: &Path,
     stem: &str,
     format: Format,
-    account: &Value,
-    activities: &[Value],
+    account: &Account,
+    activities: &[Activity],
 ) -> Result<Vec<PathBuf>, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let paths = planned_paths(dir, stem, format);
@@ -197,15 +210,15 @@ pub fn write_exports(
 mod tests {
     use super::*;
 
-    fn account() -> Value {
-        json!({"id":"acc-1","institution_name":"Charles Schwab","name":"Brokerage","number":"12345678","institution_account_id":"OPAQUE"})
+    fn account() -> Account {
+        serde_json::from_value(json!({"id":"acc-1","institution_name":"Charles Schwab","name":"Brokerage","number":"12345678","institution_account_id":"OPAQUE"})).unwrap()
     }
 
-    fn acts() -> Vec<Value> {
-        vec![
-            json!({"id":"x1","trade_date":"2026-10-05T00:00:00Z","type":"BUY","symbol":{"symbol":"AAPL"},"description":"Buy, \"AAPL\"","amount":-10.5,"currency":{"code":"USD"},"units":1.0,"price":10.5,"fee":0.0,"external_reference_id":"ref"}),
-            json!({"id":"x2","type":"INTEREST","symbol":null,"amount":0.04,"currency":{"code":"USD"}}),
-        ]
+    fn acts() -> Vec<Activity> {
+        serde_json::from_value(json!([
+            {"id":"x1","trade_date":"2026-10-05T00:00:00Z","type":"BUY","symbol":{"symbol":"AAPL"},"description":"Buy, \"AAPL\"","amount":-10.5,"currency":{"code":"USD"},"units":1.0,"price":10.5,"fee":0.0,"external_reference_id":"ref"},
+            {"id":"x2","type":"INTEREST","symbol":null,"amount":0.04,"currency":{"code":"USD"}}
+        ])).unwrap()
     }
 
     #[test]

@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.80.0
+      - uses: dtolnay/rust-toolchain@1.85.0
       - run: cargo build --features cli,trading
 
   default-build-has-no-trading:
@@ -54,3 +54,5 @@ jobs:
         run: |
           cargo test --lib default_build_has_no_trading_or_order_endpoints
           cargo test --test mock_flow default_build_exposes_no_trading_endpoint_in_the_table
+      - name: The cli feature must not enable trading
+        run: cargo test --features cli --lib default_build_has_no_trading_or_order_endpoints

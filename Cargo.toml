@@ -1,11 +1,14 @@
 [package]
-name = "snaptrade"
+name = "snaptrade-rs"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-description = "Unofficial Rust client for the SnapTrade brokerage-aggregation API: HMAC-SHA256 signed requests, pagination, rate-limit backoff, typed errors. Trading endpoints are behind the off-by-default `trading` feature."
+description = "Unofficial, strongly typed Rust client for the SnapTrade brokerage-aggregation API: HMAC-SHA256 signed requests, pagination, rate-limit backoff, typed errors. Trading endpoints are behind the off-by-default `trading` feature."
 readme = "README.md"
+repository = "https://github.com/davidawad/snaptrade-rs"
+homepage = "https://github.com/davidawad/snaptrade-rs"
+documentation = "https://docs.rs/snaptrade-rs"
 keywords = ["snaptrade", "brokerage", "finance", "api-client", "portfolio"]
 categories = ["api-bindings", "finance"]
 
@@ -14,21 +17,21 @@ default = []
 # Order, quote and trade endpoints. OFF by default: the default build cannot
 # place, replace or cancel orders, and does not even read order history.
 trading = []
-# Builds the `snaptrade` command-line binary.
+# Builds the `snaptrade-rs` command-line binary.
 cli = ["dep:clap"]
 
 [lib]
-name = "snaptrade"
+name = "snaptrade_rs"
 path = "src/lib.rs"
 
 [[bin]]
-name = "snaptrade"
-path = "src/bin/snaptrade.rs"
+name = "snaptrade-rs"
+path = "src/bin/snaptrade-rs.rs"
 required-features = ["cli"]
 
 [dependencies]
 base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive"], optional = true }
 csv = "1"
 hmac = "0.12"

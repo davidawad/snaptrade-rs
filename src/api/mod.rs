@@ -1,8 +1,10 @@
 //! Endpoint methods, one module per SnapTrade API section. Everything here is
 //! an `impl Client` block; see `endpoints()` for the machine-readable list.
 //!
-//! Responses are returned as [`serde_json::Value`]: SnapTrade adds fields
-//! often and brokerages differ, so the client does not pin a response schema.
+//! Responses are decoded into the typed [`crate::models`]. Every model keeps
+//! unknown fields in `extra`, and a few endpoints whose shape is unstable
+//! (balance history, partner info, maintenance calls) return raw
+//! [`serde_json::Value`]. [`Client::get`] is the raw escape hatch.
 //! Account-scoped calls automatically append `userId`/`userSecret` when the
 //! client has a user attached (standard keys); Personal keys send neither.
 
@@ -16,7 +18,7 @@ mod trading;
 pub use accounts::ActivityQuery;
 pub use auth::LoginOptions;
 #[cfg(feature = "trading")]
-pub use trading::{Action, EquityOrder, OrderType, TimeInForce};
+pub use trading::EquityOrder;
 
 use crate::transport::Method;
 

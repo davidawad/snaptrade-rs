@@ -3,8 +3,8 @@
 //!
 //!   cargo run --example custom_provider
 
-use snaptrade::credentials::{CommandProvider, CredentialProvider, Credentials};
-use snaptrade::Result;
+use snaptrade_rs::credentials::{CommandProvider, CredentialProvider, Credentials};
+use snaptrade_rs::Result;
 
 struct Mine;
 

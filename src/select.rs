@@ -1,7 +1,7 @@
 //! Account selection by id, or brokerage name + last digits of the account number.
 
 use crate::mask::last_n;
-use serde_json::Value;
+use crate::models::Account;
 
 #[derive(Clone, Debug, Default)]
 pub struct Selector {
@@ -15,22 +15,22 @@ impl Selector {
         self.id.is_none() && self.brokerage.is_none() && self.last4.is_none()
     }
 
-    pub fn matches(&self, account: &Value) -> bool {
+    pub fn matches(&self, account: &Account) -> bool {
         if let Some(id) = &self.id {
-            if account["id"].as_str() != Some(id.as_str()) {
+            if account.id.as_str() != id.as_str() {
                 return false;
             }
         }
         if let Some(b) = &self.brokerage {
-            let inst = account["institution_name"].as_str().unwrap_or("");
+            let inst = account.institution_name.as_deref().unwrap_or("");
             if !inst.to_lowercase().contains(&b.to_lowercase()) {
                 return false;
             }
         }
         if let Some(l) = &self.last4 {
             let want = last_n(l, l.chars().count());
-            let number = account["number"].as_str().unwrap_or("");
-            let name = account["name"].as_str().unwrap_or("");
+            let number = account.number.as_deref().unwrap_or("");
+            let name = account.name.as_deref().unwrap_or("");
             let hit = |s: &str| !want.is_empty() && last_n(s, want.len()) == want;
             if !(hit(number) || hit(name)) {
                 return false;
@@ -39,7 +39,7 @@ impl Selector {
         true
     }
 
-    pub fn filter<'a>(&self, accounts: &'a [Value]) -> Vec<&'a Value> {
+    pub fn filter<'a>(&self, accounts: &'a [Account]) -> Vec<&'a Account> {
         accounts.iter().filter(|a| self.matches(a)).collect()
     }
 }
@@ -49,12 +49,12 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn accounts() -> Vec<Value> {
-        vec![
-            json!({"id":"a1","institution_name":"Robinhood","name":"Robinhood Credit Card","number":"883821"}),
-            json!({"id":"a2","institution_name":"Schwab","name":"Investor Checking ...449","number":"Investor Checking ...449"}),
-            json!({"id":"a3","institution_name":"Schwab","name":"Brokerage ...3821","number":"Brokerage ...3821"}),
-        ]
+    fn accounts() -> Vec<Account> {
+        serde_json::from_value(json!([
+            {"id":"a1","institution_name":"Robinhood","name":"Robinhood Credit Card","number":"883821"},
+            {"id":"a2","institution_name":"Schwab","name":"Investor Checking ...449","number":"Investor Checking ...449"},
+            {"id":"a3","institution_name":"Schwab","name":"Brokerage ...3821","number":"Brokerage ...3821"}
+        ])).unwrap()
     }
 
     #[test]
@@ -67,7 +67,7 @@ mod tests {
         };
         let m = s.filter(&a);
         assert_eq!(m.len(), 1);
-        assert_eq!(m[0]["id"], "a1");
+        assert_eq!(m[0].id.as_str(), "a1");
     }
 
     #[test]
@@ -83,7 +83,7 @@ mod tests {
             last4: Some("449".into()),
             id: None,
         };
-        assert_eq!(s.filter(&a)[0]["id"], "a2");
+        assert_eq!(s.filter(&a)[0].id.as_str(), "a2");
     }
 
     #[test]

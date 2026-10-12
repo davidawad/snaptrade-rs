@@ -1,8 +1,8 @@
 //! End-to-end through the public API with a mocked transport: no network.
 
-use snaptrade::credentials::{Credentials, StaticProvider};
-use snaptrade::transport::{HttpResponse, Request, Transport};
-use snaptrade::{ActivityQuery, Client, Error};
+use snaptrade_rs::credentials::{Credentials, StaticProvider};
+use snaptrade_rs::transport::{HttpResponse, Request, Transport};
+use snaptrade_rs::{ActivityQuery, Client, Error};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 
@@ -44,7 +44,7 @@ fn personal_key_session_accounts_balances_activities() {
         (200, r#"{"data":[{"id":"a1"}],"pagination":{"total":1}}"#),
     ]);
     let accounts = c.accounts().unwrap();
-    assert_eq!(accounts[0]["id"], "acct-1");
+    assert_eq!(accounts[0].id.as_str(), "acct-1");
     assert_eq!(c.balances("acct-1").unwrap().len(), 1);
     let acts = c
         .activities("acct-1", &ActivityQuery::new().from("2024-01-01"))
@@ -63,7 +63,7 @@ fn http_410_surfaces_as_not_available() {
 
 #[test]
 fn static_provider_builds_credentials() {
-    use snaptrade::CredentialProvider;
+    use snaptrade_rs::CredentialProvider;
     let p = StaticProvider::new(Credentials::new("a", "b"));
     assert_eq!(p.credentials().unwrap().client_id, "a");
     assert!(p.user().unwrap().is_none());
@@ -72,5 +72,14 @@ fn static_provider_builds_credentials() {
 #[cfg(not(feature = "trading"))]
 #[test]
 fn default_build_exposes_no_trading_endpoint_in_the_table() {
-    assert!(snaptrade::endpoints().iter().all(|e| !e.trading));
+    assert!(snaptrade_rs::endpoints().iter().all(|e| !e.trading));
+}
+
+/// `trading` must never be reachable through `default` or another feature.
+#[test]
+fn trading_feature_is_not_enabled_by_default_or_by_cli() {
+    let manifest = include_str!("../Cargo.toml");
+    assert!(manifest.contains("default = []"));
+    assert!(manifest.contains("cli = [\"dep:clap\"]"));
+    assert!(manifest.contains("trading = []"));
 }
